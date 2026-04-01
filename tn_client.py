@@ -62,11 +62,18 @@ async def get_variant_stock(product_id: int, variant_id: int) -> int | None:
         raise TiendanubeError(504, "Timeout conectando con Tiendanube")
 
 
-_sem = asyncio.Semaphore(10)
+_sem: asyncio.Semaphore | None = None
+
+
+def _get_sem() -> asyncio.Semaphore:
+    global _sem
+    if _sem is None:
+        _sem = asyncio.Semaphore(10)
+    return _sem
 
 
 async def _get_variant_stock_throttled(product_id: int, variant_id: int) -> int | None:
-    async with _sem:
+    async with _get_sem():
         return await get_variant_stock(product_id, variant_id)
 
 

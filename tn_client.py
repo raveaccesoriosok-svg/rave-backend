@@ -1,6 +1,23 @@
 import asyncio
+import time
 import httpx
 from config import TN_API_BASE, TN_ACCESS_TOKEN, TN_STORE_ID, TN_USER_AGENT
+
+# ── Stock cache (variant_id → (stock_value, expires_at)) ─────────────────────
+_stock_cache: dict[str, tuple[int | None, float]] = {}
+STOCK_CACHE_TTL = 300  # 5 minutos
+
+
+def _cache_get(variant_id: int) -> tuple[bool, int | None]:
+    key = str(variant_id)
+    entry = _stock_cache.get(key)
+    if entry and time.monotonic() < entry[1]:
+        return True, entry[0]
+    return False, None
+
+
+def _cache_set(variant_id: int, stock: int | None):
+    _stock_cache[str(variant_id)] = (stock, time.monotonic() + STOCK_CACHE_TTL)
 
 
 class TiendanubeError(Exception):
@@ -48,16 +65,26 @@ async def get_variant_stock(product_id: int, variant_id: int) -> int | None:
     - int  → stock disponible (puede ser 0 = agotado)
     - None → stock no gestionado (asumir disponible)
     """
+    hit, cached = _cache_get(variant_id)
+    if hit:
+        return cached
+
     try:
         r = await get_client().get(f"/products/{product_id}/variants/{variant_id}")
         if r.status_code == 404:
+            _cache_set(variant_id, None)
             return None
+        if r.status_code == 429:
+            raise TiendanubeError(429, "Rate limit de Tiendanube alcanzado, reintentá en unos segundos")
         if not r.is_success:
             raise TiendanubeError(r.status_code, r.text)
         data = r.json()
         if not data.get("stock_management", False):
+            _cache_set(variant_id, None)
             return None
-        return data.get("stock", None)
+        stock = data.get("stock", None)
+        _cache_set(variant_id, stock)
+        return stock
     except httpx.TimeoutException:
         raise TiendanubeError(504, "Timeout conectando con Tiendanube")
 
@@ -68,7 +95,7 @@ _sem: asyncio.Semaphore | None = None
 def _get_sem() -> asyncio.Semaphore:
     global _sem
     if _sem is None:
-        _sem = asyncio.Semaphore(10)
+        _sem = asyncio.Semaphore(5)
     return _sem
 
 
@@ -117,11 +144,17 @@ async def create_draft_order(items: list[dict]) -> str:
         "contact_email": "checkout@raveaccesorios.com.ar",
         "payment_status": "unpaid",
     }
-    r = await get_client().post("/draft_orders", json=payload)
-    if not r.is_success:
-        raise TiendanubeError(r.status_code, r.text)
-    data = r.json()
-    checkout_url = data.get("checkout_url")
-    if not checkout_url:
-        raise TiendanubeError(502, "Tiendanube no devolvio checkout_url")
-    return checkout_url
+    for attempt in range(3):
+        r = await get_client().post("/draft_orders", json=payload)
+        if r.status_code == 429:
+            if attempt < 2:
+                await asyncio.sleep(2 ** attempt)  # 1s, 2s
+                continue
+            raise TiendanubeError(429, "Tiendanube rate limit: demasiadas solicitudes, reintentá en unos segundos")
+        if not r.is_success:
+            raise TiendanubeError(r.status_code, r.text)
+        data = r.json()
+        checkout_url = data.get("checkout_url")
+        if not checkout_url:
+            raise TiendanubeError(502, "Tiendanube no devolvio checkout_url")
+        return checkout_url

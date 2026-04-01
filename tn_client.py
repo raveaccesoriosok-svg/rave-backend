@@ -29,7 +29,8 @@ def create_client() -> httpx.AsyncClient:
             "User-Agent": TN_USER_AGENT,
             "Content-Type": "application/json",
         },
-        timeout=10.0,
+        timeout=30.0,
+        limits=httpx.Limits(max_connections=50, max_keepalive_connections=20),
     )
     return _client
 
@@ -61,15 +62,23 @@ async def get_variant_stock(product_id: int, variant_id: int) -> int | None:
         raise TiendanubeError(504, "Timeout conectando con Tiendanube")
 
 
+_sem = asyncio.Semaphore(10)
+
+
+async def _get_variant_stock_throttled(product_id: int, variant_id: int) -> int | None:
+    async with _sem:
+        return await get_variant_stock(product_id, variant_id)
+
+
 async def get_many_variant_stocks(
     items: list[dict],
 ) -> dict[str, int | None]:
     """
     Recibe lista de {tn_product_id, tn_variant_id} y devuelve
-    {str(variant_id): stock_or_null} con todas las llamadas en paralelo.
+    {str(variant_id): stock_or_null} con máximo 10 requests simultáneas.
     """
     tasks = [
-        get_variant_stock(item["tn_product_id"], item["tn_variant_id"])
+        _get_variant_stock_throttled(item["tn_product_id"], item["tn_variant_id"])
         for item in items
     ]
     results = await asyncio.gather(*tasks, return_exceptions=True)

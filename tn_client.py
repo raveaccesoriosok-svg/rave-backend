@@ -142,11 +142,23 @@ async def create_draft_order(items: list[dict]) -> str:
         pid = item.get("tn_product_id")
         vid = item["tn_variant_id"]
         if pid:
-            # Invalidar cache para obtener stock actualizado
+            # 1) Verificar si el producto está disponible a nivel producto
+            try:
+                rp = await get_client().get(f"/products/{pid}")
+                if rp.is_success:
+                    prod_data = rp.json()
+                    if not prod_data.get("available", True):
+                        raise TiendanubeError(422, "Producto agotado o no disponible")
+            except TiendanubeError:
+                raise
+            except Exception:
+                pass  # si falla la verificación de producto, seguimos con la de variante
+
+            # 2) Verificar stock de la variante (invalidar cache para datos frescos)
             _stock_cache.pop(str(vid), None)
             fresh_stock = await get_variant_stock(pid, vid)
             if fresh_stock is not None and fresh_stock == 0:
-                raise TiendanubeError(422, f"El producto con variante {vid} está agotado")
+                raise TiendanubeError(422, "Producto agotado o no disponible")
 
     products = [
         {"variant_id": item["tn_variant_id"], "quantity": item.get("quantity", 1)}

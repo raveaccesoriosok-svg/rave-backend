@@ -79,6 +79,10 @@ async def get_variant_stock(product_id: int, variant_id: int) -> int | None:
         if not r.is_success:
             raise TiendanubeError(r.status_code, r.text)
         data = r.json()
+        # Si la variante está explícitamente marcada como no disponible, tratar como agotado
+        if not data.get("available", True):
+            _cache_set(variant_id, 0)
+            return 0
         if not data.get("stock_management", False):
             _cache_set(variant_id, None)
             return None
@@ -133,6 +137,17 @@ async def create_draft_order(items: list[dict]) -> str:
     Devuelve la checkout_url para redirigir al usuario.
     items = [{tn_variant_id: int, quantity: int}]
     """
+    # Re-validar stock fresco antes de crear el pedido (ignora cache)
+    for item in items:
+        pid = item.get("tn_product_id")
+        vid = item["tn_variant_id"]
+        if pid:
+            # Invalidar cache para obtener stock actualizado
+            _stock_cache.pop(str(vid), None)
+            fresh_stock = await get_variant_stock(pid, vid)
+            if fresh_stock is not None and fresh_stock == 0:
+                raise TiendanubeError(422, f"El producto con variante {vid} está agotado")
+
     products = [
         {"variant_id": item["tn_variant_id"], "quantity": item.get("quantity", 1)}
         for item in items

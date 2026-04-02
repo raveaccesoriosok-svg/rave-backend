@@ -86,7 +86,21 @@ async def get_variant_stock(product_id: int, variant_id: int) -> int | None:
         if not data.get("stock_management", False):
             _cache_set(variant_id, None)
             return None
-        stock = data.get("stock", None)
+
+        # Multi-ubicación: si hay stock_locations, usar el stock del depósito principal
+        stock_locations = data.get("stock_locations", [])
+        if stock_locations:
+            import json as _json
+            print(f"[stock_locations] variant={variant_id} locations={_json.dumps(stock_locations)}")
+            # Buscar el depósito principal (main=True o el primero)
+            main_loc = next(
+                (loc for loc in stock_locations if loc.get("main") or loc.get("is_main") or loc.get("is_default")),
+                stock_locations[0]
+            )
+            stock = main_loc.get("stock", data.get("stock", None))
+        else:
+            stock = data.get("stock", None)
+
         _cache_set(variant_id, stock)
         return stock
     except httpx.TimeoutException:

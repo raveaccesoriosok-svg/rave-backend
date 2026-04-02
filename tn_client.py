@@ -87,14 +87,7 @@ async def get_variant_stock(product_id: int, variant_id: int) -> int | None:
             _cache_set(variant_id, None)
             return None
 
-        # Multi-ubicación: inventory_levels contiene stock por depósito
-        # Usamos el depósito principal = el que tiene el id numérico más bajo (el más antiguo)
-        inventory_levels = data.get("inventory_levels", [])
-        if inventory_levels:
-            principal = min(inventory_levels, key=lambda loc: loc.get("id", 0))
-            stock = principal.get("stock", data.get("stock", None))
-        else:
-            stock = data.get("stock", None)
+        stock = data.get("stock", None)
 
         _cache_set(variant_id, stock)
         return stock

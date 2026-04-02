@@ -37,6 +37,7 @@ class StockRequest(BaseModel):
 
 class CheckoutItem(BaseModel):
     tn_variant_id: int
+    tn_product_id: int | None = None
     quantity: int = 1
 
 
@@ -48,6 +49,13 @@ class CheckoutRequest(BaseModel):
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.get("/debug/variant/{product_id}/{variant_id}")
+async def debug_variant(product_id: int, variant_id: int):
+    """Devuelve el raw de Tiendanube para inspeccionar campos de stock/ubicación."""
+    r = await tn_client.get_client().get(f"/products/{product_id}/variants/{variant_id}")
+    return {"status": r.status_code, "data": r.json()}
 
 
 @app.post("/stock")

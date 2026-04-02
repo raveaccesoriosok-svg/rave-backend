@@ -87,17 +87,12 @@ async def get_variant_stock(product_id: int, variant_id: int) -> int | None:
             _cache_set(variant_id, None)
             return None
 
-        # Multi-ubicación: si hay stock_locations, usar el stock del depósito principal
-        stock_locations = data.get("stock_locations", [])
-        if stock_locations:
-            import json as _json
-            print(f"[stock_locations] variant={variant_id} locations={_json.dumps(stock_locations)}")
-            # Buscar el depósito principal (main=True o el primero)
-            main_loc = next(
-                (loc for loc in stock_locations if loc.get("main") or loc.get("is_main") or loc.get("is_default")),
-                stock_locations[0]
-            )
-            stock = main_loc.get("stock", data.get("stock", None))
+        # Multi-ubicación: inventory_levels contiene stock por depósito
+        # Usamos el depósito principal = el que tiene el id numérico más bajo (el más antiguo)
+        inventory_levels = data.get("inventory_levels", [])
+        if inventory_levels:
+            principal = min(inventory_levels, key=lambda loc: loc.get("id", 0))
+            stock = principal.get("stock", data.get("stock", None))
         else:
             stock = data.get("stock", None)
 
